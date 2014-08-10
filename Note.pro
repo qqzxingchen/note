@@ -17,13 +17,15 @@ SOURCES += main.cpp\
     traycontroller.cpp \
     notedata.cpp \
     fontselector.cpp \
-    eventfilter.cpp
+    eventfilter.cpp \
+    singleapplication.cpp
 
 HEADERS  += \
     noteinfo.h \
     traycontroller.h \
     notedata.h \
     fontselector.h \
-    eventfilter.h
+    eventfilter.h \
+    singleapplication.h
 
 FORMS    +=
