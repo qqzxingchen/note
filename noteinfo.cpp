@@ -31,6 +31,9 @@ NoteInfo::NoteInfo(QWidget *parent) :
     isDeleting = false;
     isLocked = false;
 
+    fileName = QString::null;
+    waitToBeDeleted = false;
+
     plainTextEdit = new QPlainTextEdit(this);
     plainTextEdit->installEventFilter(ef);
 
@@ -140,6 +143,26 @@ void NoteInfo::setIsLocked(bool value)
 }
 
 
+QString NoteInfo::getFileName()
+{
+    return fileName;
+}
+void NoteInfo::setFileName(const QString &value)
+{
+    fileName = value;
+}
+
+
+bool NoteInfo::getWaitToBeDeleted() const
+{
+    return waitToBeDeleted;
+}
+void NoteInfo::setWaitToBeDeleted(bool value)
+{
+    waitToBeDeleted = value;
+}
+
+
 void NoteInfo::mousePressEvent(QMouseEvent * event)
 {
     if( event->button () == Qt::LeftButton )
@@ -152,7 +175,6 @@ void NoteInfo::mousePressEvent(QMouseEvent * event)
             {
                 isDeleting = true;
                 emit ( deletePointer(this) );
-                delete this;
             }
         }
         else if( event->pos().y() <= 16 &&
@@ -197,6 +219,7 @@ void NoteInfo::keyPressEvent (QKeyEvent *event)
         emit ( saveDataSignal () );
     }
 }
+
 
 
 void NoteInfo::paintEvent(QPaintEvent *)

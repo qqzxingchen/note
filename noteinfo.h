@@ -29,6 +29,9 @@ private:
 
     static EventFilter * ef;
 
+    QString fileName;
+    bool waitToBeDeleted;
+
     QFont * font;
     QPlainTextEdit * plainTextEdit;
     QSlider * transparentSlider;
@@ -61,6 +64,12 @@ public:
 
     bool getIsLocked() const;
     void setIsLocked(bool value);
+
+    QString getFileName();
+    void setFileName(const QString &value);
+
+    bool getWaitToBeDeleted() const;
+    void setWaitToBeDeleted(bool value);
 };
 
 #endif // NOTEINFO_H

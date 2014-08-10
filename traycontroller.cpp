@@ -7,6 +7,10 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QTextStream>
+#include <QTime>
+#include <QFile>
+
+#include <QDebug>
 
 TrayController::TrayController(QObject *parent) :
     QSystemTrayIcon(parent)
@@ -19,11 +23,11 @@ TrayController::TrayController(QObject *parent) :
 
     createContextMenu();
 
+    // 接受托盘图标点击消息
     connect ( this,SIGNAL(activated(QSystemTrayIcon::ActivationReason)),
               this,SLOT(activatedSlot(QSystemTrayIcon::ActivationReason)) );
 
     readSavedData();
-
 }
 
 void TrayController::createContextMenu()
@@ -35,6 +39,7 @@ void TrayController::createContextMenu()
     disAllAction = new QAction( tr("显示所有便签"),this );
     saveAction = new QAction( tr("保存便签数据"),this );
     quitAction = new QAction( tr("退出程序"),this );
+    resumeDeletedAction = new QAction( tr("恢复删除的标签"),this );
 
     connect( this->createOneAction,SIGNAL(triggered()),
              this,SLOT(createOneSlot()) );
@@ -45,6 +50,8 @@ void TrayController::createContextMenu()
     connect( this->saveAction,SIGNAL(triggered()),this,SLOT(writeToSaveData()) );
     connect( this->quitAction,SIGNAL(triggered()),
              this,SLOT(quitSlot()) );
+    connect( this->resumeDeletedAction,SIGNAL(triggered()),
+             this,SLOT(resumeDeletedSlot()) );
 
     QMenu * font = fontMenu->initFontSelectMenu();
     connect ( fontMenu,SIGNAL(selectedFontFamily(QString)),
@@ -58,6 +65,7 @@ void TrayController::createContextMenu()
     menu->addMenu(font);
     menu->addSeparator();
     menu->addAction(saveAction);
+    menu->addAction(resumeDeletedAction);
     menu->addSeparator();
     menu->addAction(quitAction);
 
@@ -66,12 +74,11 @@ void TrayController::createContextMenu()
 
 void TrayController::activatedSlot(QSystemTrayIcon::ActivationReason reason)
 {
-    if( reason == QSystemTrayIcon::Trigger
-            && noteInfoArray.count() !=0 )
+    if( reason == QSystemTrayIcon::Trigger )
     {
         for (int i = 0 ; i < noteInfoArray.count() ; i ++)
         {
-            if( noteInfoArray.at(i)->isHidden() )
+            if( noteInfoArray.at(i)->isHidden() && !noteInfoArray.at(i)->getWaitToBeDeleted ())
             {
                 disAllSlot();
                 return ;
@@ -84,6 +91,7 @@ void TrayController::activatedSlot(QSystemTrayIcon::ActivationReason reason)
 
 void TrayController::readSavedData()
 {
+    // 遍历data文件夹内所有的文件
     QDir dir(QString("data\\"));
     QStringList filters;
     filters << "*.xct";
@@ -93,13 +101,21 @@ void TrayController::readSavedData()
     NoteData data;
     for(int i = 0;i<allFiles.size ();i++)
     {
+        // 读取文件内的内容，并创建对应的noteInfo并赋值
         QFileInfo fileInfo = allFiles.at (i);
         data.clearData();
         data.readDataFromFile(fileInfo.filePath());
-        createOneNote(data.getStation(),data.getPercent(),
-                      data.getText(),data.getFontSize());
+        createOneNote(
+                    data.getStation(),
+                    data.getPercent(),
+                    data.getText(),
+                    data.getFontSize(),
+                    fileInfo.filePath()
+        );
     }
+    disAllSlot ();
 
+    // 读取配置信息（只有全局字体信息）
     QFile file("conf\\config.xct");
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
         return ;
@@ -107,28 +123,49 @@ void TrayController::readSavedData()
     QString fontFamily = in.readLine();
     setNewFontFamily(fontFamily);
 }
-void TrayController::writeToSaveData ()
+QString TrayController::createAnUnExistingFileName()
 {
-    QDirIterator it("data\\");
-    while (it.hasNext())
-    {
-        QFile file;
-        file.setFileName(it.next());
-        file.remove();
-    }
+    QTime t;
+    t= QTime::currentTime();
+    qsrand(t.msec()+t.second()*1000+t.hour ()*100);
 
+    QString fName = "data\\";
+    for ( int i = 0 ; i < 128 ; i ++ )
+        fName.append ( qrand() % 10 + '0' );
+    fName.append (".xct");
+
+    QFile file(fName);
+    if( file.exists () )
+        return createAnUnExistingFileName();
+    else
+        return fName;
+}
+
+void TrayController::writeToSaveData (bool isSaveDeletedNote)
+{
     NoteInfo * note;
     NoteData data;
 
     for(int i = 0 ; i < noteInfoArray.count() ; i ++)
     {
         note = noteInfoArray.at(i);
-        data.clearData();
-        data.setStation( note->geometry() );
-        data.setText( note->getNoteText() );
-        data.setPercent( note->getWindowTransparent() );
-        data.setFontSize( note->getFontSize() );
-        data.writeDataToFile(QString("data\\%1.xct").arg(i));
+        if( !note->getWaitToBeDeleted () || isSaveDeletedNote )
+        {
+            data.clearData();
+            data.setStation( note->geometry() );
+            data.setText( note->getNoteText() );
+            data.setPercent( note->getWindowTransparent() );
+            data.setFontSize( note->getFontSize() );
+            data.writeDataToFile(note->getFileName ());
+        }
+        else
+        {
+            //删除文件、销毁内存、从链表中移除指针、重定位当前 i 值
+            QFile::remove ( note->getFileName () );
+            delete noteInfoArray.at (i);
+            noteInfoArray.remove (i);
+            i --;
+        }
     }
 
     QFile file("conf\\config.xct");
@@ -149,23 +186,28 @@ void TrayController::setNewFontFamily(QString fontFamily)
 }
 
 void TrayController::createOneNote(QRect station,int percent,
-                                   QString text,int fontSize)
+                                   QString text,int fontSize,QString fileName)
 {
-    NoteInfo * note = createOneSlot();
+    // 创建一个新的标签，但是不显示（读取完毕信息并设置后显示）
+    NoteInfo * note = createOneSlot(false);
     note->setNoteText(text);
     note->setGeometry(station);
     note->setWindowTransparent(percent);
     note->setFontSize(fontSize);
+    note->setFileName(fileName);
 }
 
-NoteInfo * TrayController::createOneSlot()
+NoteInfo * TrayController::createOneSlot(bool isShow)
 {
     NoteInfo * newOne = new NoteInfo();
     connect ( newOne,SIGNAL(deletePointer(NoteInfo*)),
               this,SLOT(deletePointerSlot(NoteInfo*)));
     connect ( newOne,SIGNAL(saveDataSignal()),this,SLOT(writeToSaveData()) );
+    newOne->setFileName (createAnUnExistingFileName ());
     newOne->setFontFamily(fontFamily);
-    newOne->show();
+
+    if( isShow )
+        newOne->show();
 
     noteInfoArray.append( newOne );
     return newOne;
@@ -176,7 +218,8 @@ void TrayController::deletePointerSlot(NoteInfo * pointer)
     {
         if( noteInfoArray.at(i) == pointer )
         {
-            noteInfoArray.remove(i);
+            noteInfoArray.at(i)->setWaitToBeDeleted (true);
+            noteInfoArray.at(i)->hide ();
             return ;
         }
     }
@@ -195,12 +238,21 @@ void TrayController::disAllSlot()
 {
     for(int i = 0 ; i < noteInfoArray.count() ; i ++)
     {
-        noteInfoArray.at(i)->show();
+        if(!noteInfoArray.at(i)->getWaitToBeDeleted ())
+            noteInfoArray.at(i)->show();
+    }
+}
+void TrayController::resumeDeletedSlot ()
+{
+    for(int i = 0 ; i < noteInfoArray.count() ; i ++)
+    {
+        noteInfoArray.at(i)->setWaitToBeDeleted (false);
+        noteInfoArray.at(i)->show ();
     }
 }
 void TrayController::quitSlot()
 {
-    writeToSaveData ();
+    writeToSaveData (false);
     qApp->quit();
 }
 
